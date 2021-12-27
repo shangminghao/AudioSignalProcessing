@@ -180,5 +180,148 @@ DFCNN模型结构如下：
 
 #### 3.1.1 卷积单元
 
-**卷积层：**
+**卷积层：**每个卷积单元里包含两个卷积层，卷积核大小都为 `3*3` ，padding 方式为 `same` ，激活函数设置为 `relu` ，卷积核数量为32、64、128等。
+
+**归一化层：**这里使用 `BatchNormlization`，在一个 `batch` 内从 `length, width, depth` 三个方向对输入向量进行标准化，这样做可以使神经网络每一层的输入基本分布在一个标准差和均值下，**目的就是让每一层的分布稳定下来**，让后面的层可以在前面层的基础上安心学习知识，解决深层网络下的梯度消失问题。
+
+**池化层：**使用 `Maxpooling` 方式，池化尺寸为 `2*2` ，步长和池化尺寸一致，padding方式为 `valid` ，所以池化之后尺寸减半。这一层作用是减小输出向量尺寸大小和缓解过拟合。
+
+```python
+class CNNCell(keras.layers.Layer):
+    def __init__(self, filters, kernel_size=(3,3), activation='relu', **kwargs):
+        super(CNNCell, self).__init__(**kwargs)
+        self.conv2d_1 = keras.layers.Conv2D(filters, 
+                                            kernel_size, 
+                                            use_bias=True,
+                                            activation=activation,
+                                            padding='same',
+                                            kernel_initializer='he_normal',)
+        self.conv2d_2 = keras.layers.Conv2D(filters, 
+                                            kernel_size, 
+                                            use_bias=True,
+                                            activation=activation,
+                                            padding='same',
+                                            kernel_initializer='he_normal', )
+        self.batch_norm_1 = keras.layers.BatchNormalization(axis=-1)
+        self.batch_norm_2 = keras.layers.BatchNormalization(axis=-1)
+        self.max_pool = keras.layers.MaxPool2D(pool_size=(2, 2), strides=None, padding="valid")
+
+    def call(self, inputs, **kwargs):
+        x = self.conv2d_1(inputs)
+        x = self.batch_norm_1(x)
+        x = self.conv2d_2(x)
+        x = self.batch_norm_2(x)
+        x = self.max_pool(x)
+        return x
+    
+    def compute_output_shape(self, input_shape):
+        return input_shape[0], input_shape[1] // 2, input_shape[2] // 2, input_shape[3] // 2
+```
+
+#### 3.1.2 CTC
+
+对于语音识别来说，训练数据的输入是一段音频，输出是它转录的文字（transcript），但是我们是不知道字母和语音是怎么对齐（align）的。这使得训练语音识别比看起来更加复杂。
+
+要人来标注这种对齐是非常困难而且容易出错的，因为很多音素的边界是很难区分，如下图3，人通过看波形或者频谱是很难准确的区分其边界的。之前基于 HMM 的语音识别系统在训练声学模型是需要对齐，我们通常会让模型进行强制对齐（forced alignment）。类似的在手写文字识别中，也会存在同样的问题，虽然看起来比声音简单一些，传统的手写文字识别方法首先需要一个分割（segmentation）算法，然后再识别。
+
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5p6gAN1APvD1WCdCKiaSgPO16COGag9wn9J2qzYIFdtBDCuFZ9UVV9Iz2XyYFTUN1XRdMXxkwT7Rag/0?wx_fmt=png)
+
+<center><font face="黑体" size=3>图3 文字识别和语音识别中的的对齐问题</font></center>
+
+**CTC（Connectionist Temporal Classification）算法并不要求输入输出是严格对齐的**。
+
+为了更好的理解CTC的对齐方法，先举个简单的对齐方法。假设对于一段音频，我们希望的输出是 $Y = [c,a,t]$ 这个序列，一种将输入输出进行对齐的方式如下图4所示，先将每个输入对应一个输出字符，然后将重复的字符删除。
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5p6gAN1APvD1WCdCKiaSgPO1oudcpvHgLP9BHptaP9pR3hgozooH09p7Py2erDloxna87C7fhicHGrA/0?wx_fmt=png)
+
+<center><font face="黑体" size=3>图4 cat序列对齐</font></center>
+
+仔细观察可以发现，上述对齐方式有两个问题：
+
+- 通常这种对齐方式是不合理的。比如在语音识别任务中，有些音频片可能是无声的，这时候应该是没有字符输出的。
+- 对于一些本应含有重复字符的输出，这种对齐方式没法得到准确的输出。例如输出对齐的结果为 $[h,h,e,l,l,l,o]$，通过去重操作后得到的不是“hello”而是“helo“，
+
+为了解决上述问题，CTC算法引入的一个新的占位符用于输出对齐的结果。这个占位符称为空白占位符，通常使用符号 $\epsilon$，也称 blank。这个符号在对齐结果中输出，但是在最后的去重操作会将所有的 $\epsilon$ 删除得到最终的输出。利用这个占位符，可以将输入与输出有了非常合理的对应关系，如下图5所示。
+
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5p6gAN1APvD1WCdCKiaSgPO1lWuWpQ0pYueQbx8icSu3pXG53KdjHtSbmyNqYDUSnwmPIqLIviadaCNQ/0?wx_fmt=png)
+
+在这个映射方式中，如果在标定文本中有重复的字符，对齐过程中会在两个重复的字符当中插入 $\epsilon$ 占位符。利用这个规则，上面的“hello”就不会变成“helo”了。
+了解了 CTC 原理我们就可以来计算损失函数了，具体公式就不在这里推导了，具体可参考知乎文章：[详解CTC](https://zhuanlan.zhihu.com/p/42719047)。这里我们直接使用 tensorflow 中的API进行计算即可。详细代码如下：
+
+```python
+class CtcBatchCost(keras.layers.Layer):
+    def __init__(self, **kwargs):
+        super(CtcBatchCost, self).__init__(**kwargs)
+
+    def call(self, inputs, **kwargs):
+        labels, y_pred, input_length, label_length = inputs
+        y_pred = y_pred[:, :, :]
+        return keras.backend.ctc_batch_cost(labels, y_pred, input_length, label_length)
+    
+    def compute_output_shape(self, input_shape):
+        return input_shape[0], 1
+```
+
+`ctc_batch_cost(y_true, y_pred, input_length, label_length)` 函数参数介绍如下：
+
+- y_true：形如 `[batch_size, max_string_length]` 的张量，包含标签的真值和padding值
+
+- y_pred：形如 `[batch_size, time_step, num_categories]` 的张量，包含预测值或输出的 softmax 值
+
+- input_length：形如 `[batch_size,1]` 的张量，y_pred 中未进行补零操作的长度，也就是原始 input_data 未补零的长度除以MaxPooling 缩放的倍数
+
+- label_length：形如`[batch_size,1]` 的张量，包含 y_true 中每个 batch 标签序列 padding 前的实际长度
+
+#### 3.1.3 模型整体结构和代码
+
+声学模型 DFCNN 代码如下：
+
+```python
+class DFCNN(object):
+    """a dfcnn network for Amodel."""
+
+    def __init__(self, vocab_size=1296, inp_width=200, lr=0.0008, gpu_nums=1, is_training=True):
+        self.vocab_size = vocab_size
+        self.gpu_nums = gpu_nums
+        self.lr = lr
+        self.is_training = is_training
+        self.inp_width = inp_width
+        self.ctc_batch_cost_layer = CtcBatchCost(name='ctc')
+        self._model_init()
+        if self.is_training:
+            self._ctc_init()
+            self.opt_init()
+
+    def _model_init(self):
+        self.inputs = keras.layers.Input(name='the_inputs', shape=(None, self.inp_width, 1))
+        x = CNNCell(32)(self.inputs)
+        x = CNNCell(64)(x)
+        x = CNNCell(128)(x)
+        x = CNNCell(128, pool=False)(x)
+        x = keras.layers.Reshape((-1, self.inp_width // 8 * 128), name="reshape")(x)
+        x = keras.layers.Dropout(rate=0.2)(x, training=self.is_training)
+        x = keras.layers.Dense(256, activation="relu",
+                               use_bias=True, kernel_initializer='he_normal')(x)
+        x = keras.layers.Dropout(rate=0.2)(x, training=self.is_training)
+        self.outputs = keras.layers.Dense(self.vocab_size, activation='softmax',
+                               use_bias=True, kernel_initializer='he_normal')(x)
+        self.model = keras.Model(inputs=self.inputs, outputs=self.outputs)
+
+
+    def _ctc_init(self):
+        self.labels = keras.Input(name='the_labels', shape=[None], dtype='float32')
+        self.input_length = keras.Input(name='input_length', shape=[1], dtype='int64')
+        self.label_length = keras.Input(name='label_length', shape=[1], dtype='int64')
+        self.loss_out = self.ctc_batch_cost_layer([self.labels, self.outputs, self.input_length, self.label_length])
+        self.ctc_model = keras.Model(inputs=[self.inputs, self.labels, self.input_length, self.label_length],
+                                     outputs=self.loss_out, name="_ctc_model")
+
+    def opt_init(self):
+        opt = keras.optimizers.Adam(lr=self.lr, beta_1=0.9, beta_2=0.999, decay=0.01, epsilon=10e-8)
+        # if self.gpu_nums > 1:
+        #     self.ctc_model = keras.utils.multi_gpu_model(self.ctc_model,gpus=self.gpu_nums)
+        # keras自定义损失函数要求函数前两个参数分别为y_true, y_pred
+        self.ctc_model.compile(loss={'ctc': lambda y_true, output: output}, optimizer=opt)
+```
+
+
 
