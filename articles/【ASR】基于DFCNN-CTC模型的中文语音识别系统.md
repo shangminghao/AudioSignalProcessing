@@ -59,6 +59,12 @@ wave_data, wave_data.shape
 
 `wave_data` 是一个包含 `104350` 个元素的一维数组，元素数据类型为 `int16` ，范围在 $2^{15} \thicksim 2^{15}-1$ 之间。
 
+plot出来看一下。如下图，横轴表示采样点，纵轴表示声音信号振幅。
+
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5oMo41JTGH6sIorjhr3K8pOpUiaO7qLoqic0J2M9WiaGOmBL0icxQGK3GSD6m01at2xnVbibS5HbZichicFA/0?wx_fmt=png)
+
+<center><font face="黑体" size=3>图1 声音信号波形图</font></center>
+
 ### 2.2 音频数据写入MongoDB
 
 MongoDB 是由C++语言编写的，是一个基于分布式文件存储的开源数据库系统。MongoDB 将数据存储为一个文档，数据结构由键值`key: value`对组成。MongoDB 文档类似于 `JSON` 对象，文档字段值可以包含其他文档，数组及文档数组。
@@ -164,5 +170,15 @@ db['thchs30'].find_one({"id":1})
 
 科大讯飞在2016年提出了一种全新的语音识别框架，称为全序列卷积神经网络（deep fully convolutional neural network，DFCNN）。DFCNN 将一句语音转化成一张图像作为输入，把时间和频率作为图像的两个维度（语谱图），通过较多的卷积层和池化(pooling)层的组合，实现对整句语音的建模，输出单元则直接与最终的识别结果（比如音节或者汉字）相对应。利用 CNN 的参数共享机制，可以将参数数量下降一个级别，且深层次的卷积和池化层能够充分考虑语音信号的上下文信息，且可以在较短的时间内就可以得到识别结果，具有较好的实时性。
 
+DFCNN模型结构如下：
 
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5oMo41JTGH6sIorjhr3K8pOze14CiciarHesXNicq38qR8qpsMPKlOuLHgbY2TraiczoicXjZOib1JY0XuQ/0?wx_fmt=png)
+
+<center><font face="黑体" size=3>图2 DFCNN模型结构示意图</font></center>
+
+由图2可见，DFCNN模型输入是一个声音信号的语谱图（Spectrogram），那么什么是语谱图，语谱图怎么求？这点我们在下节介绍。输入层紧接着的是N个由卷积层、归一化层、池化层组成的卷积神经网络结构，也是模型的主要组成单元，这里我们称为**卷积单元**。N个卷积单元之后接了一个 `Reshape` 层，这一层可以将上一层的输出由4维转换为3维，即从 `[batch_size, seq_len, width, depth]` 转换为 `[batch_size, seq_len, width* depth]` 然后就是两层全连接神经网络，模型训练时中间夹了 `Dropout` 用于缓解过拟合问题。
+
+#### 3.1.1 卷积单元
+
+**卷积层：**
 
