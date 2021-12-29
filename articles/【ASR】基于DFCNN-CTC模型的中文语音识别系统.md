@@ -336,6 +336,21 @@ class DFCNN(object):
 
 ![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5qH9tenE7VPa6cIYCIzGJIY4mn82caNZAJUFlu5VLzd8zYZ7cIXHegIV5ubbq6X4xkic2U1VpThiaGw/0?wx_fmt=png)
 
+<center><font face="黑体" size=3>图8 DFCNN-CTC的模型结构</font></center>
+
 ### 3.2 语言模型
 
-前面讲过语言模型的任务是将发音单元转换为文字，具体就是把“拼音+声调”转换为一串文字，
+前面讲过语言模型的任务是将发音单元转换为文字，具体就是把“拼音+声调”转换为一串文字，从图2可以看出，这里输入和输出一一对应，其实就是一个序列标注任务，关于序列标注任务的模型有很多，这里我们选用 **Transformer** 模型。
+
+Transformer 模型来自于 Google 提出的一篇论文 **Attention Is All You Need** 。论文中提出一个全新的模型，叫 Transformer，抛弃了以往深度学习任务里面使用到的 CNN 和 RNN ，取而代之的是一种 self-Attention 的结构，将Attention思想发挥到了极致。目前大热的预训练模型 **Bert** 就是基于 Transformer 构建的，这个模型广泛应用于NLP领域，例如机器翻译，问答系统，文本摘要和语音识别等等方向。原版 Transformer 模型的结构如下：
+
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5pLns3OIaoCWelJic9jx2uFw4x99iaaPt0JLPCpfF9yTSWU8rocqoOGDYsnIbMII1KevH2hvHBDnnlg/0?wx_fmt=png)
+
+<center><font face="黑体" size=3>图9 原版Transfomer模型结构图</font></center>
+
+从图9可以看出，原版模型是一个标准的 sequence to sequence 模型架构，左侧是 Encoder 模型，右侧是 Decoder 模型，因为在提出时它解决的也是一个 seq2seq 的问题，比如机器翻译、文本摘要、问答等等。这里我们由于是一个序列标注的任务，所以只使用 Encoder 部分就足够了。可以看到 Encoder 部分主要分为**位置编码（Position Encoding）、多头注意力机制（Multi-Head Attention）、残差结构（Add & Norm)、前馈神经网络（Point-wise FFN）**等4个主要模块，下面进行详细介绍。
+
+
+
+ 
+
