@@ -350,7 +350,170 @@ Transformer 模型来自于 Google 提出的一篇论文 **Attention Is All You 
 
 从图9可以看出，原版模型是一个标准的 sequence to sequence 模型架构，左侧是 Encoder 模型，右侧是 Decoder 模型，因为在提出时它解决的也是一个 seq2seq 的问题，比如机器翻译、文本摘要、问答等等。这里我们由于是一个序列标注的任务，所以只使用 Encoder 部分就足够了。可以看到 Encoder 部分主要分为**位置编码（Position Encoding）、多头注意力机制（Multi-Head Attention）、残差结构（Add & Norm)、前馈神经网络（Point-wise FFN）**等4个主要模块，下面进行详细介绍。
 
+#### 3.2.1 self-Attention
 
+**self-Attention** 是 Transformer 模型的最核心的机制，几乎可以用 **self-Attention** 来指代 Transformer 模型了。那么什么是 **self-Attention**？self-Attention 通常是基于多头注意力机制（Multi-Head Attention）实现的，就是把多头注意力机制的三个输入参数`Query, Key, Value` 全部赋值为一个向量，那么对于这个向量来说就是自己和自己做 Attention 计算，所以叫 **self-Attention** 。
 
- 
+那么问题来了，什么叫 Multi-Head Attention？要了解这个问题，**先要搞清楚什么是 Attention**。Attention 分成很多种，根据计算机制可以分成乘性Attention、加性Attention等等，根据注意力的范围又可以分成全局Attention、局部Attention、随机Attention、混合Attention等等，这几年已经被人玩出花来了，这里就不一一介绍，只讲解使用最广的 **Scaled Dot-Product Attention**。
+
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5rC4JSMf3m2tncuTTRjZjjMPJxCAmxJ0HslxWFQJpXrXN7icsic82TFcOOO97OWsCVyxrmbNyL6ItZg/0?wx_fmt=png)
+
+<center><font face="黑体" size=3>图10 Scaled Dot-Product Attention结构图</font></center>
+
+从上图10可以看出，Scaled Dot-Product Attention 模块有3个输入`Q, K, V` ，也就是我们前面说的查询、键、值，`Q`代表当前我们关注的向量通常就是上一层的输出，`K` 和 `V`是一对组合，`K`表示注意力范围内的序列集合，`V`表示注意力范围内的序列对应的隐层向量，通常情况下我们直接 `K = V`。Attention 通常用于 seq2seq 架构，用于捕捉解码器每一个单元与编码器输出序列的关系，所以在 seq2seq 架构中`Q`就是解码器中上一层的输出，`K` 和 `V`是编码器的输出。而在 self-Attention 中，前面说过`Q, K, V`直接都是上一层的输出。
+
+那么具体在 Attention 中`Q, K, V`怎么计算的呢？下面给出一个公式
+$$
+\begin {equation}
+Attention(Q,K,V) = softmax_k(\frac {QK^T}{\sqrt {d_k}}) V
+\label {eq:3.1}
+\end {equation}
+$$
+假设`Q` 的形状为`[batch_size, Tq, dim]`, `V` 的形状为 `[batch_size, Tv, dim]` and `K` 的形状为 `[batch_size, Tv, dim]`，这个形状应该怎么理解呢？第一个维度 `batch_size` 是深度学习里面的一个常规的概念表示 `批的大小` ，说人话就是一次计算要处理多少个样本；第二个维度 `Tq和Tv` 就表示查询和键的序列长度，简单来说就是这个句子有多少词，每个词要跟编码器多少个词进行注意力交互；第三个维度就是张量的深度，简单来说就是每个词向量的长度。那么Attention的计算可分为以下三步：
+
+- 把 `Q` 和 `K` 矩阵相乘，`matmul(Q, K, transpose_b=True)`，然后按深度的平方根因子 $\sqrt {d_k}$ 进行缩放，得到一个 `[batch_size, Tq, Tv]`的矩阵。这一步有啥意义？从操作来看是把 `Q` 矩阵序列中的每一个词向量与 `V` 矩阵序列中的每一个词向量两两相乘再除以一个系数，是不是有点熟悉，对，就是余弦相似度！（除了系数有些差别，含义是一样的）所以第一步得到的就是一个相似度矩阵 `scores`。
+- 在最后一个维度上进行 `softmax`归一化 ，`softmax(socres, axis=-1)`。这一步的目的很简单，就是把相似度矩阵归一化。比如相似度矩阵某一行为 `[0.3, 0.05, 5]`，归一化后变为 `[0.00895047, 0.00697063, 0.9840789]`，权重之和为1，这一步的结果记为 `distribution`。
+- 把 `distribution`与`V`矩阵相乘，`matmul(distribution, value)`。这一步怎么理解呢？我们知道`distribution`的一行表示`Q`中的某个向量`q` 与 `K` 中 `Tv` 个向量的相似度，在乘以 `V`，实际上相当于把`V`中的`Tv` 个向量按相似度加权求和得到一个向量。
+
+简而言之，Attention 机制就是结合注意力范围序列 `K` 对 `Q` 中包含的信息进行增强和抑制，通过更加关注与输入的元素相似的部分，抑制其它无用的信息。其最大的优势就是能一步到位的考虑全局联系和局部联系，且能并行化计算，这是 CNN 和 RNN 无法做到的。
+
+这里推荐一篇文章[浅谈 Attention 机制的理解](https://www.cnblogs.com/ydcode/p/11038064.html#%E4%BB%80%E4%B9%88%E6%98%AF%E6%B3%A8%E6%84%8F%E5%8A%9B%E6%9C%BA%E5%88%B6)。
+
+**什么是 Multi-Head Attention **？多头注意力机制，就是多做几组 Attention，有多少 head，就有多少组，然后把结果拼接起来。比如原文做了8组，如下图：
+
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5rC4JSMf3m2tncuTTRjZjjMCqibiacu11j2pnQ2rIpmonn7aZS015DONEKhk6e9wneWJiavUq2phjMTw/0?wx_fmt=png)
+
+<img src="https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5rC4JSMf3m2tncuTTRjZjjMBVWfmF4krx7a23SZPuO0X5NVfAticZ4qsTibzKibSBUbUgAGIvCSicGibRA/0?wx_fmt=png" style="zoom: 50%;" />
+
+<center><font face="黑体" size=3>图11 多头注意力机制</font></center>
+
+具体代码实现如下：
+
+```python
+class MultiHeadAttention(keras.layers.Layer):
+    def __init__(self, latent_dim, heads, mask_right=False, **kwargs):
+        super(MultiHeadAttention, self).__init__(**kwargs)
+        self.latent_dim = latent_dim
+        self.heads = heads
+        self.mask_right = mask_right
+        assert self.latent_dim % heads == 0, "the latent_dim: {} must can be divisible by heads!"
+        self.depth = self.latent_dim // heads
+        self.q_dense = keras.layers.Dense(self.latent_dim, use_bias=False)
+        self.k_dense = keras.layers.Dense(self.latent_dim, use_bias=False)
+        self.v_dense = keras.layers.Dense(self.latent_dim, use_bias=False)
+
+    def call(self, inp, **kwargs):
+        q, k, v = inp[:3]
+        v_mask, q_mask = None, None
+        if len(inp) > 3:
+            # x_mask: [batch_size, seq_len_x]
+            v_mask = inp[3]
+            if len(inp) > 4:
+                q_mask = inp[4]
+        wq = self.q_dense(q)
+        wk = self.k_dense(k)
+        wv = self.v_dense(v)
+        # (batch_size, seq_len, latent_dim) =>(batch_size, seq_len, heads, depth)
+        wq = tf.reshape(wq, (tf.shape(wq)[0], tf.shape(wq)[1], self.heads, self.depth))
+        wk = tf.reshape(wk, (tf.shape(wk)[0], tf.shape(wk)[1], self.heads, self.depth))
+        wv = tf.reshape(wv, (tf.shape(wv)[0], tf.shape(wv)[1], self.heads, self.depth))
+        # (batch_size, seq_len, heads, depth) => (batch_size, heads, seq_len, depth)
+        wq = tf.transpose(wq, perm=(0, 2, 1, 3))
+        wk = tf.transpose(wk, perm=(0, 2, 1, 3))
+        wv = tf.transpose(wv, perm=(0, 2, 1, 3))
+        # => (batch_size, heads, seq_len_q, seq_len_k)
+        scores = tf.matmul(wq, wk, transpose_b=True)
+        # 缩放因子
+        dk = tf.cast(self.depth, tf.float32)
+        # scores[:, i, j] means the simility of the q[j] with k[j]
+        scores = scores / tf.math.sqrt(dk)
+
+        if v_mask is not None:
+            # v_mask:(batch_size, seq_len_k)
+            v_mask = tf.cast(v_mask, tf.float32)
+            # (batch_size, seq_len_k) => (batch_size, 1, 1, seq_len_k)
+            for _ in range(K.ndim(scores) - K.ndim(v_mask)):
+                v_mask = tf.expand_dims(v_mask, 1)
+            scores -= (1 - v_mask) * 1e9
+        # 解码端，自注意力时使用。预测第三个词仅使用前两个词
+        if (self.mask_right is not False) or (self.mask_right is not None):
+            if self.mask_right:
+                # [1,1,seq_len_q,seq_len_k]
+                ones = tf.ones_like(scores[:1, :1])
+                # 不包含对角线的上三角矩阵，每个元素是1e9
+                mask_ahead = (ones - tf.linalg.band_part(ones, -1, 0)) * 1e9
+                # 遮掉所有未预测的词
+                scores = scores - mask_ahead
+            else:
+                # 这种情况下，mask_right是外部传入的0/1矩阵，shape=[q_len, k_len]
+                mask_ahead = (1 - K.constant(self.mask_right)) * 1e9
+                mask_ahead = K.expand_dims(K.expand_dims(mask_ahead, 0), 0)
+                self.mask_ahead = mask_ahead
+                scores = scores - mask_ahead
+        scores = tf.math.softmax(scores, -1)
+        # (batch_size, heads, seq_len_q, seq_len_k) => (batch_size, heads, seq_len_q, depth)
+        out = tf.matmul(scores, wv)
+        # (batch_size, heads, seq_len_q, depth) => (batch_size, seq_len_q, heads, depth)
+        out = tf.transpose(out, perm=(0, 2, 1, 3))
+        # (batch_size, seq_len_q, heads, depth) => (batch_size, seq_len_q, latent_dim)
+        out = tf.reshape(out, (tf.shape(out)[0], tf.shape(out)[1], self.latent_dim))
+        if q_mask:
+            # q_mask:(batch_size, seq_len_q)
+            q_mask = tf.cast(q_mask, tf.float32)
+            # (batch_size, seq_len_q) => (batch_size, seq_len_q, 1)
+            for _ in range(K.ndim(out) - K.ndim(q_mask)):
+                q_mask = q_mask[..., tf.newaxis]
+            out *= q_mask
+        return out
+
+    def compute_output_shape(self, input_shape):
+        return input_shape[0][0], input_shape[0][1], self.latent_dim
+```
+
+self-Attention 到这里就结束了，有没有发现一个问题，self-Attention 忽略了一个重要信息，那就是序列中的词是有顺序的！但是 Attention 机制只是简单的计算相似度然后加权求和，这些都和顺序没有关系，序列中词的位置信息被损失掉了。如果解决这个问题呢，就要依靠Position Encoding 了。
+
+#### 3.2.2 Position Encoding
+
+到目前为止，Transformer 模型中还缺少一种解释输入序列中单词顺序的方法。为了处理这个问题，Transformer 给 Encoder 层和 Decoder 层的输入添加了一个额外的向量 Positional Encoding，维度和 embedding 的维度一样，这个向量采用了一种很独特的方法来让模型学习到这个值，这个向量能决定当前词的位置，或者说在一个句子中不同的词之间的距离。这个位置向量的具体计算方法有很多种，论文中的计算方法如下：
+$$
+\begin {equation}
+PE(pos,2i) = \sin(\frac {pos}{10000^{2i / d_{model}}})
+\label {eq:3.2}
+\end {equation}
+$$
+
+$$
+\begin {equation}
+PE(pos,2i+1) = \cos(\frac {pos}{10000^{2i / d_{model}}})
+\label {eq:3.3}
+\end {equation}
+$$
+
+其中 `pos` 是指当前词在句子中的位置，`i` 是指向量中每个值的索引，可以看出，在**偶数位置，使用正弦编码，在奇数位置，使用余弦编码**，这里提供一下代码。
+
+```python
+class PositionalEncoding(keras.layers.Layer):
+    def __init__(self, latent_dim, maximum_position=1000, **kwargs):
+        super(PositionalEncoding, self).__init__(**kwargs)
+        self.maximum_position = maximum_position
+        self.latent_dim = latent_dim
+        position = np.arange(self.maximum_position).reshape((self.maximum_position, 1))
+        d_model = np.arange(self.latent_dim).reshape((1, self.latent_dim))
+        angle_rates = 1 / np.power(10000, (2 * (d_model // 2)) / np.float32(self.latent_dim))
+        self.angle_rads = position * angle_rates
+        # 将 sin 应用于数组中的偶数索引（indices）；2i
+        self.angle_rads[:, 0::2] = np.sin(self.angle_rads[:, 0::2])
+        # 将 cos 应用于数组中的奇数索引；2i+1
+        self.angle_rads[:, 1::2] = np.cos(self.angle_rads[:, 1::2])
+        # (1, maximum_position, latent_dim)
+        self.pos_encoding = tf.cast(self.angle_rads[np.newaxis, ...], dtype=tf.float32)
+
+    def call(self, x, **kwargs):
+        self.seq_len = tf.shape(x)[1]
+        self.position_encoding = self.pos_encoding[:, :self.seq_len, :]
+        return x + self.position_encoding
+
+    def compute_output_shape(self, input_shape):
+        return 1, input_shape[1], self.latent_dim
+```
 
