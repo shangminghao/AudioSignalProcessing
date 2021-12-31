@@ -517,3 +517,134 @@ class PositionalEncoding(keras.layers.Layer):
         return 1, input_shape[1], self.latent_dim
 ```
 
+代码逻辑很简单，先根据公式计算一个大的 `position_encoding` 矩阵，然后根据实际输入向量的形状取用对应的部分即可。下面我们把 `position_encoding` 矩阵画出来。
+
+```python
+import matplotlib.pyplot as plt
+%matplotlib inline
+
+posEnc = PositionalEncoding(128, 500)
+plt.pcolormesh(posEnc.pos_encoding[0], cmap='RdBu')
+plt.ylabel('Position')
+plt.xlabel('Depth')
+plt.colorbar()
+plt.show()
+```
+
+<img src="https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5rsw1AoDj2Ykf7N8y79RCLiaVYXibHDcVjXWIYuibick7BtkSgaepbRlgvXcsgC4Hk0sjTaojo8xQBficQ/0?wx_fmt=png" style="zoom:150%;" />
+
+<center><font face="黑体" size=3>图12 position_encoding矩阵</font></center>
+
+#### 3.2.3 Add & Norm
+
+如图9，在 Transformer 中，每一个子层（self-Attetion，Point-wise FFN）之后都会接一个残缺模块，并且有一个 Layer normalization]，写成公式 $LayerNorm(X + SubLayer(X))$ 。简单来说，就是在当前层的输出向量基础上再加上当前层的输入然后进行归一化。残差结构的思想来源于 ResNet 神经网络，主要是为了解决随着神经网络层数增加带来的两个问题：梯度消失和网络退化。
+
+梯度消失问题是由于随着神经网络层数加深，在进行梯度下降优化时，根据反向传播链式求导法则，离输出层越近的层梯度越大，离输出层越远的层梯度越小甚至接近于0，导致远端网络参数很难更新。要解决这个问题有多种方式：一种就是使用残差结构，相当于每一层加一个常数项1（**dh/dx=d(f+x)/dx=1+df/dx**），这样就算原来的导数 df/dx 很小，这时候误差仍然能够有效的反向传播；还有就是把数据送入激活函数之前进行 Normalization（归一化），把输入转化成均值为0方差为1的数据，对输入数据的分布特征进行优化，尽量避免数据都落在激活函数饱和区；另外使用 ReLu 激活函数也能起到很好的效果。
+
+那解决了梯度消失问题是不是网络就能无限叠加了？实验证明，随着网络层数的增加，网络发生了退化（degradation）的现象：随着网络层数的增多，训练集loss逐渐下降，然后趋于饱和，当再增加网络深度的话，训练集loss反而会增大。注意这并不是过拟合，因为在过拟合中训练loss是一直减小的。也就是说，当网络退化时，浅层网络能够达到比深层网络更好的训练效果。从信息论的角度讲，在前向传输的过程中，随着层数的加深，数据的原始信息会逐层减少，而残差结构的直接映射的加入，保证了下一层的网络一定比上一层包含更多的信息。
+
+这个结构比较简单，代码如下：
+
+```python
+# 残差层，这一层的输入包含 x 和 SubLayer(x)
+keras.layers.Lambda(lambda x: x[0] + x[1])
+# 层归一化，在序列维度上归一化，在NLP领域常用
+keras.layers.LayerNormalization(epsilon=1e-6)
+```
+
+#### 3.2.4 Point-wise FFN
+
+这层主要是提供非线性变换，注意到在Multi-Head Attention的内部结构中，我们进行的主要都是矩阵乘法（scaled Dot-Product Attention），即**进行的都是线性变换**。而线性变换的学习能力是不如非线性变化的强的，所以Multi-Head Attention的输出尽管利用了Attention 机制，学习到了每个 word 的新 representation 表达，但是这种 representation 的表达能力可能并不强，我们仍然希望可以**通过激活函数的方式，来强化 representation 的表达能力**。这个结构就是两层全连接神经网络，代码如下：
+
+```python
+class FeedForward(keras.layers.Layer):
+    def __init__(self, d_model, dff=512, **kwargs):
+        super(FeedForward, self).__init__(**kwargs)
+        self.d_model = d_model
+        self.dense_1 = keras.layers.Dense(dff, activation='relu')
+        self.dense_2 = keras.layers.Dense(d_model)
+
+    def call(self, inp, **kwargs):
+        out = self.dense_1(inp)
+        out = self.dense_2(out)
+        return out
+
+    def compute_output_shape(self, input_shape):
+        return input_shape[:2] + (self.d_model,)
+```
+
+#### 3.2.5 模型整体结构和代码
+
+语言模型 Transformer 代码如下：
+
+```python
+class Transformer:
+    def __init__(self, vocab_size, em_dim, num_layers, is_training=True):
+        self.embedding = keras.layers.Embedding(vocab_size, em_dim, mask_zero=True, name="embedding")
+        self.position_em = PositionalEncoding(em_dim, name="position")
+        self.mask = keras.layers.Lambda(lambda x: x._keras_mask, name="mask")
+        self.num_layers = num_layers
+        self.is_training = is_training
+        self.mha = [MultiHeadAttention(em_dim, heads=8, name="multiheadAttn_{}".format(i)) for i in range(num_layers)]
+        self.dropout_em = keras.layers.Dropout(rate=0.1, name="dropout_em")
+        self.dropout_attn = [keras.layers.Dropout(rate=0.1, name="enc_{}_dropout".format(i)) for i in
+                             range(self.num_layers)]
+        self.dropout_ffn = [keras.layers.Dropout(rate=0.1, name="ffn_{}_dropout".format(i)) for i in
+                            range(self.num_layers)]
+        self.ffn = [FeedForward(em_dim, dff=512, name="ffn_{}".format(i)) for i in range(self.num_layers)]
+        self.final = keras.layers.Dense(vocab_size, activation="softmax", name="out")
+        self.adam_lr = extend_with_piecewise_linear_lr(Adam)
+
+    def build(self):
+        self.x_in = keras.Input(shape=(None,), name="inp")
+        x = self.embedding(self.x_in)
+        x_mask = self.mask(x)
+        x = self.position_em(x)
+        x = self.dropout_em(x, training=self.is_training)
+        for i in range(self.num_layers):
+            attn_out = self.mha[i]([x, x, x, x_mask])
+            attn_out = self.dropout_attn[i](attn_out, training=self.is_training)
+            x = keras.layers.Lambda(lambda x: x[0] + x[1], name="add_{}_1".format(i))([x, attn_out])
+            x = keras.layers.LayerNormalization(epsilon=1e-6, name="LN_{}_1".format(i))(x)
+            ffn_out = self.ffn[i](x)
+            ffn_out = self.dropout_ffn[i](ffn_out, training=self.is_training)
+            x = keras.layers.Lambda(lambda x: x[0] + x[1], name="add_{}_2".format(i))([x, ffn_out])
+            x = keras.layers.LayerNormalization(epsilon=1e-6, name="LN_{}_2".format(i))(x)
+        self.enc_out = self.final(x)
+        self.model = keras.Model(self.x_in, self.enc_out)
+        self.model.compile(loss=loss_function, metrics=[acc_function],
+                           optimizer=self.adam_lr(learning_rate=1e-4, lr_schedule={1000: 1, 2000: 0.1}))
+```
+
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5rsw1AoDj2Ykf7N8y79RCLiaAhzcqJL7ZtyWAIYUPEKerjMlr5xORWTAYwjgcg2KFpdozuMMOuaGOQ/0?wx_fmt=png)
+
+<center><font face="黑体" size=3>图13 Transformer 模型结构</font></center>
+
+## 4 音频信号处理
+
+在语音算法领域用的最多的音频特征是 MFCC（梅尔倒谱系数）和 Filter Bank（时频图，也称 fbank），两者整体相似只是 MFCC 比 fbank 多了一步 DCT （离散余弦变换）。
+
+对语音信号分帧、加窗等一系列预处理后做短时傅里叶变换将其从时域转换到频域后得到的结果叫语谱图，经过 Mel 滤波后成为 mel 频谱，也叫 fbank，再做一层 DCT 就变成了 MFCC，这里我们声学模型的输入使用语谱图作为特征，可以借助 numpy 或者 librosa 实现。
+
+```python
+# 语谱图
+spectrogram = np.abs(librosa.stft(wav_signal, n_fft=400, hop_length=160, 
+                           win_length=400, window='hamming', center=False))
+# mel频谱
+mel_spec = librosa.feature.melspectrogram(wavsignal, sr=sr, n_fft=400, hop_length=160, 
+                           win_length=400, window='hamming', center=False)
+# mfcc
+mfcc = librosa.feature.mfcc(wav_signal, sr=sr, n_fft=400, hop_length=160, 
+                           win_length=400, window='hamming', center=False)
+```
+
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5rsw1AoDj2Ykf7N8y79RCLiaib6lBO91icyP10ia8eDaHaTcCAib0WSIXI53zb1rZdAHF1Ivsg8JrxygNw/0?wx_fmt=png)
+
+<center><font face="黑体" size=3>图14 语音信号各种频域特征之间的关系</font></center>
+
+
+
+## 5 基于深度学习的中文语音识别实践
+
+### 5.1 数据预处理
+
