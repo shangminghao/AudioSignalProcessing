@@ -648,3 +648,152 @@ mfcc = librosa.feature.mfcc(wav_signal, sr=sr, n_fft=400, hop_length=160,
 
 ### 5.1 数据预处理
 
+#### 5.1.1 建立标签映射关系
+
+我们都知道，前面的模型中做的都是数学运算，但是我现在的数据都是文字和拼音，所以在模型运算前，我们需要把输入输入标签（拼音+声调、文字）转换成数字才能输入模型。既然需要转换，首先我们需要一个词典存储转换前的标签和转换后数字之间的映射关系，怎么获取字典？很简单，遍历一遍数据集给每个标签编个号即可。标签映射函数代码如下：
+
+```python
+def label2id(file_path, pny2id=None, han2id=None):
+    if pny2id is None:
+        pny2id = {"pad": 0, "unk": 1, "go": 2, "eos": 3, "": 4}
+    if han2id is None:
+        han2id = {"pad": 0, "unk": 1, "go": 2, "eos": 3, "": 4}
+    with open(file_path, "r", encoding="utf-8") as f:
+        for line in tqdm(f.readlines()):
+            # 数据集中语音文件名、拼音、汉字等3个字段是用制表符分割的
+            wav_file, pnys, hans = line.strip().split('\t')
+            if wav_file and pnys and hans:
+                pny_lst = pnys.strip().split(" ")
+                if len(pny_lst) == len(hans.replace(" ", "")):
+                    for pny, han in zip(pny_lst, hans):
+                        if pny not in pny2id:
+                            pny2id[pny] = len(pny2id)
+                        if han not in han2id:
+                            han2id[han] = len(han2id)
+    return pny2id, han2id
+```
+
+从函数中可以看到，映射字典中加入了5个特殊字符，`{"pad": 0, "unk": 1, "go": 2, "eos": 3, "": 4}` 分别表示填充标签、未登录标签、起始标签、终止标签、空标签。下面我们来生成两个字典，并将其写入文件中。
+
+```python
+import json
+
+#生成字典
+pny2id, han2id = label2id("./data_txt/aishell_dev.txt")
+pny2id, han2id = label2id("./data_txt/aishell_train.txt", pny2id, han2id)
+pny2id, han2id = label2id("./data_txt/aishell_test.txt", pny2id, han2id)
+pny2id, han2id = label2id("./data_txt/prime.txt", pny2id, han2id)
+pny2id, han2id = label2id("./data_txt/stcmd.txt", pny2id, han2id)
+pny2id, han2id = label2id("./data_txt/thchs_dev.txt", pny2id, han2id)
+pny2id, han2id = label2id("./data_txt/thchs_test.txt", pny2id, han2id)
+pny2id, han2id = label2id("./data_txt/thchs_train.txt", pny2id, han2id)
+
+# 写入文件
+with open("./pny2id.json", "w", encoding="utf-8") as f:
+    json.dump(pny2id, f)
+with open("./han2id.json", "w", encoding="utf-8") as f:
+    json.dump(han2id, f)
+```
+
+#### 5.1.2 构建数据生成器
+
+
+
+**计算CTC序列长度**：前文讲了，如果输出序列存在叠字的情况，那么 CTC 对应的序列会在叠字中间插入一个 $\epsilon$ 符号，插入之后 CTC 序列长度+1。
+
+```python
+def ctc_len(label):
+    add_len = 0
+    label_len = len(label)
+    for i in range(label_len - 1):
+        if label[i] == label[i + 1]:
+            add_len += 1
+    return label_len + add_len
+```
+
+**将一个 batch 内的音频特征数据 padding 成一个矩阵**：我们不能保证一个 batch 内所有的音频时间都一样长，那么通常提取出的音频特征矩阵肯定不是一样的大小，那怎么放进一个矩阵用来计算呢？找到最大的序列长度，建一个大矩阵（`batch_size, seq_len, depth`），把数据都往里面填，填不满的地方补零呗。
+
+```python
+def wav_padding(wav_data_lst):
+    wav_lens = [data.shape[0] for data in wav_data_lst]
+    wav_max_len = max(wav_lens)
+    wav_lens = np.array([leng // 8 for leng in wav_lens])
+    # 将每一个语音文件都padding到最大长度
+    new_wav_data_lst = np.zeros((len(wav_data_lst), wav_max_len, wav_data_lst[0].shape[1], 1))
+    for i in range(len(wav_data_lst)):
+        new_wav_data_lst[i, :wav_data_lst[i].shape[0], :, 0] = wav_data_lst[i]
+    return new_wav_data_lst, wav_lens
+```
+
+**将一个 batch 内的标签数据 padding 成一个矩阵**：同样我们不能保证一个 batch 内所有的标签都一样长，那怎么放进一个矩阵用来计算呢？找到最大的长度，建一个大矩阵（`batch_size, seq_len`），把数据都往里面填，填不满的地方补零。
+
+```python
+def label_padding(label_data_lst):
+    label_lens = [len(label) for label in label_data_lst]
+    max_label_len = max(label_lens)
+    new_label_data_lst = [label_data+[0]*(max_label_len - len(label_data)) for label_data in label_data_lst]
+    return np.array(new_label_data_lst), np.array(label_lens)
+```
+
+万事俱备，咱们开始构建数据生成器：
+
+```python
+class DataGenerator:
+    def __init__(self,
+                 batch_size,
+                 data_filter,
+                 pny2id,
+                 n_fft=400,
+                 hop_length=160,
+                 win_length=400,
+                 window="hamming",
+                 center=False):
+        self.batch_size = batch_size
+        self.data_filter = data_filter
+        self.pny2id = pny2id
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.win_length = win_length
+        self.window = window
+        self.center = center
+
+    def get_am_batch(self):
+        wav_data_lst = []
+        label_data_lst = []
+        while True:
+            self.db = MongoClient(host="127.0.0.1", port=27017)["asr"]
+            for coll_name in self.db.list_collection_names():
+                for doc in self.db[coll_name].find(self.data_filter, batch_size=self.batch_size):
+                    wav_str = doc["wav"]["str_data"]
+                    wav_signal = np.frombuffer(wav_str, np.short)
+                    sr = doc["wav"]["framerate"]
+                    # string in list
+                    pny = doc["pny"]
+                    # string
+                    han = doc["han"]
+                    spectrogram = np.abs(librosa.stft(wav_signal,
+                                                      n_fft=self.n_fft,
+                                                      hop_length=self.hop_length,
+                                                      win_length=self.win_length,
+                                                      window=self.window,
+                                                      center=self.center))
+                    log_spec = np.log(spectrogram + 1)
+                    pad_log_spec = np.zeros((log_spec.shape[0] // 8 * 8 + 8, log_spec.shape[1]))
+                    pad_log_spec[:log_spec.shape[0], :] = log_spec
+                    label = [self.pny2id.get(p, 1) for p in pny]
+                    label_ctc_len = ctc_len(label)
+                    # 1、ctc最小的序列长度肯定不能小于模型输出帧数 
+                    # 2、显存有限，帧数大于800的数据咱就不要了哈
+                    if pad_log_spec.shape[0] // 8 >= label_ctc_len and pad_log_spec.shape[0] <= 800:
+                        wav_data_lst.append(pad_log_spec)
+                        label_data_lst.append(label)
+                    if len(wav_data_lst) == self.batch_size:
+                        # 将wav_datapadding至最大长度，返回[batch_size, wav_max_len, half_window_len, 1)]
+                        pad_wav_data, input_length = wav_padding(wav_data_lst)
+                        pad_label_data, label_length = label_padding(label_data_lst)
+                        yield [pad_wav_data, pad_label_data, input_length, label_length], np.zeros((pad_wav_data.shape[0],))
+                        wav_data_lst, label_data_lst = [], []
+```
+
+
+
