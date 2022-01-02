@@ -324,7 +324,7 @@ class DFCNN(object):
         self.label_length = keras.Input(name='label_length', shape=[1], dtype='int64')
         self.loss_out = self.ctc_batch_cost_layer([self.labels, self.outputs, self.input_length, self.label_length])
         self.ctc_model = keras.Model(inputs=[self.inputs, self.labels, self.input_length, self.label_length],
-                                     outputs=self.loss_out, name="_ctc_model")
+                                     outputs=self.loss_out, name="ctc_model")
 
     def opt_init(self):
         opt = keras.optimizers.Adam(lr=self.lr, beta_1=0.9, beta_2=0.999, decay=0.01, epsilon=10e-8)
@@ -541,7 +541,7 @@ plt.show()
 
 梯度消失问题是由于随着神经网络层数加深，在进行梯度下降优化时，根据反向传播链式求导法则，离输出层越近的层梯度越大，离输出层越远的层梯度越小甚至接近于0，导致远端网络参数很难更新。要解决这个问题有多种方式：一种就是使用残差结构，相当于每一层加一个常数项1（**dh/dx=d(f+x)/dx=1+df/dx**），这样就算原来的导数 df/dx 很小，这时候误差仍然能够有效的反向传播；还有就是把数据送入激活函数之前进行 Normalization（归一化），把输入转化成均值为0方差为1的数据，对输入数据的分布特征进行优化，尽量避免数据都落在激活函数饱和区；另外使用 ReLu 激活函数也能起到很好的效果。
 
-那解决了梯度消失问题是不是网络就能无限叠加了？实验证明，随着网络层数的增加，网络发生了退化（degradation）的现象：随着网络层数的增多，训练集loss逐渐下降，然后趋于饱和，当再增加网络深度的话，训练集loss反而会增大。注意这并不是过拟合，因为在过拟合中训练loss是一直减小的。也就是说，当网络退化时，浅层网络能够达到比深层网络更好的训练效果。从信息论的角度讲，在前向传输的过程中，随着层数的加深，数据的原始信息会逐层减少，而残差结构的直接映射的加入，保证了下一层的网络一定比上一层包含更多的信息。
+那解决了梯度消失问题是不是网络就能无限叠加了？实验证明，随着网络层数的增加，网络发生了退化（degradation）的现象：随着网络层数的增多，训练集loss逐渐下降，然后趋于饱和，当再增加网络深度的话，训练集loss反而会增大。这并不是过拟合，因为在过拟合中训练loss是一直减小的。也就是说，当网络退化时，浅层网络能够达到比深层网络更好的训练效果。从信息论的角度讲，在前向传输的过程中，随着层数的加深，数据的原始信息会逐层减少，而残差结构的直接映射的加入，保证了下一层的网络一定比上一层包含更多的信息。
 
 这个结构比较简单，代码如下：
 
@@ -642,8 +642,6 @@ mfcc = librosa.feature.mfcc(wav_signal, sr=sr, n_fft=400, hop_length=160,
 
 <center><font face="黑体" size=3>图14 语音信号各种频域特征之间的关系</font></center>
 
-
-
 ## 5 基于深度学习的中文语音识别实践
 
 ### 5.1 数据预处理
@@ -695,9 +693,7 @@ with open("./han2id.json", "w", encoding="utf-8") as f:
     json.dump(han2id, f)
 ```
 
-#### 5.1.2 构建数据生成器
-
-
+#### 5.1.2 构建DFCNN数据生成器
 
 **计算CTC序列长度**：前文讲了，如果输出序列存在叠字的情况，那么 CTC 对应的序列会在叠字中间插入一个 $\epsilon$ 符号，插入之后 CTC 序列长度+1。
 
@@ -765,7 +761,7 @@ class DataGenerator:
             for coll_name in self.db.list_collection_names():
                 for doc in self.db[coll_name].find(self.data_filter, batch_size=self.batch_size):
                     wav_str = doc["wav"]["str_data"]
-                    wav_signal = np.frombuffer(wav_str, np.short)
+                    wav_signal = np.frombuffer(wav_str, np.short).astype(np.float32)
                     sr = doc["wav"]["framerate"]
                     # string in list
                     pny = doc["pny"]
@@ -777,13 +773,12 @@ class DataGenerator:
                                                       win_length=self.win_length,
                                                       window=self.window,
                                                       center=self.center))
-                    log_spec = np.log(spectrogram + 1)
+                    log_spec = np.log(spectrogram + 1).T
                     pad_log_spec = np.zeros((log_spec.shape[0] // 8 * 8 + 8, log_spec.shape[1]))
                     pad_log_spec[:log_spec.shape[0], :] = log_spec
                     label = [self.pny2id.get(p, 1) for p in pny]
                     label_ctc_len = ctc_len(label)
-                    # 1、ctc最小的序列长度肯定不能小于模型输出帧数 
-                    # 2、显存有限，帧数大于800的数据咱就不要了哈
+                    # 1、ctc最小的序列长度肯定不能小于模型输出帧数 2、显存有限，帧数大于800的数据咱就不要了哈
                     if pad_log_spec.shape[0] // 8 >= label_ctc_len and pad_log_spec.shape[0] <= 800:
                         wav_data_lst.append(pad_log_spec)
                         label_data_lst.append(label)
@@ -791,9 +786,322 @@ class DataGenerator:
                         # 将wav_datapadding至最大长度，返回[batch_size, wav_max_len, half_window_len, 1)]
                         pad_wav_data, input_length = wav_padding(wav_data_lst)
                         pad_label_data, label_length = label_padding(label_data_lst)
-                        yield [pad_wav_data, pad_label_data, input_length, label_length], np.zeros((pad_wav_data.shape[0],))
+                        yield [pad_wav_data, pad_label_data, input_length, label_length], np.zeros(
+                            (pad_wav_data.shape[0],))
                         wav_data_lst, label_data_lst = [], []
 ```
 
+#### 5.1.3 构建Transformer数据生成器
 
+**将一个 batch 内的标签数据 padding 成一个矩阵**：找到最大的长度，建一个大矩阵（`batch_size, seq_len`），把数据都往里面填，填不满的地方补零。这里和前面 `label_padding` 函数几乎一样，只是不返回 `label_length`。
+
+```python
+def seq_padding(x):
+    length = [len(item) for item in x]
+    max_len = max(length)
+    x = [item+[0]*(max_len-len(item)) for item in x]
+    return np.array(x)
+```
+
+构建Transformer数据生成器。
+
+```python
+class LmDataGenerator:
+    def __init__(self, batch_size, data_filter, pny_vocab, han_vocab):
+        self.data_filter = data_filter
+        self.batch_size = batch_size
+        self.pny2id = pny_vocab
+        self.han2id = han_vocab
+
+    def get_lm_batch(self):
+        pny_lst = []
+        han_lst = []
+        while True:
+            self.db = MongoClient(host="127.0.0.1", port=27017)["asr"]
+            # for coll_name in self.db.list_collection_names():
+            for coll_name in ["thchs30"]:
+                for doc in self.db[coll_name].find(self.data_filter, batch_size=self.batch_size):
+                    pny = doc["pny"]
+                    han = doc["han"]
+                    pny = [self.pny2id.get(p, 1) for p in pny]
+                    han = [self.han2id.get(h, 1) for h in han]
+                    if len(pny) <= 512 and len(pny) == len(han):
+                        pny_lst.append(pny)
+                        han_lst.append(han)
+                    if len(pny_lst) == self.batch_size:
+                        inp = seq_padding(pny_lst)
+                        label = seq_padding(han_lst)
+                        yield inp, label
+                        pny_lst, han_lst = [], []
+```
+
+### 5.2 开始训练DFCNN
+
+#### 5.2.1 导入库并设置GPU显存动态增长
+
+```python
+import tensorflow as tf
+from tensorflow import keras
+import numpy as np
+import time
+import json
+from pymongo import MongoClient
+from network import DFCNN, Evaluate
+from utils import DataGenerator
+import os
+import datetime
+%load_ext tensorboard
+
+
+gpus = tf.config.experimental.list_physical_devices(device_type="GPU")
+for gpu in gpus:
+    tf.config.experimental.set_memory_growth(gpu, True)
+```
+
+#### 5.2.2 划分训练集
+
+`id` 能被10整除的作为验证集，不能整除的作为训练集
+
+```python
+train_data_filter = {"id":{"$not": {"$mod":[10, 0]}}}
+val_data_filter = {"id":{"$mod":[10, 0]}}
+```
+
+#### 5.2.3 读取标签映射关系
+
+```python
+with open("pny2id.json", "r", encoding="utf-8") as f:
+    pny2id = json.load(f)
+pny2id["blank"] = len(pny2id)
+id2pny = {v:k for k,v in pny2id.items()}
+print(len(pny2id), pny2id["blank"])
+
+# output:
+1300 1299
+```
+
+#### 5.2.4 获取train_batch
+
+```python
+# 笔者电脑垃圾，有条件可以设置大一点
+batch_size = 16
+train_data_gen = AmDataGenerator(batch_size, train_data_filter, pny2id)
+train_batch = train_data_gen.get_am_batch()
+```
+
+#### 5.2.5 实例化训练模型
+
+```python
+dfcnn = DFCNN(vocab_size=len(pny2id), inp_width=201, is_training=True)
+dfcnn.model.summary()
+train_model = dfcnn.ctc_model
+
+# output:
+Model: "model"
+_________________________________________________________________
+Layer (type)                 Output Shape              Param #   
+=================================================================
+the_inputs (InputLayer)      [(None, None, 201, 1)]    0         
+_________________________________________________________________
+cnn_cell (CNNCell)           (None, None, 100, 32)     9824      
+_________________________________________________________________
+cnn_cell_1 (CNNCell)         (None, None, 50, 64)      55936     
+_________________________________________________________________
+cnn_cell_2 (CNNCell)         (None, None, 25, 128)     222464    
+_________________________________________________________________
+cnn_cell_3 (CNNCell)         (None, None, 25, 128)     296192    
+_________________________________________________________________
+reshape (Reshape)            (None, None, 3200)        0         
+_________________________________________________________________
+dropout (Dropout)            (None, None, 3200)        0         
+_________________________________________________________________
+dense (Dense)                (None, None, 256)         819456    
+_________________________________________________________________
+dropout_1 (Dropout)          (None, None, 256)         0         
+_________________________________________________________________
+dense_1 (Dense)              (None, None, 1300)        334100    
+=================================================================
+Total params: 1,737,972
+Trainable params: 1,736,564
+Non-trainable params: 1,408
+```
+
+可见，模型共有约173万个参数需要训练。
+
+#### 5.2.6 设置回调
+
+`callback` 有很多种，笔者这里就简单弄两种：`Evaluate` 和 `Temsorboard`。
+
+```python
+class AmEvaluate(keras.callbacks.Callback):
+    def __init__(self, val_filter, batch_size, pny2id, **kwargs):
+        super(AmEvaluate, self).__init__(**kwargs)
+        self.val_filter = val_filter
+        self.batch_size = batch_size
+        self.pny2id = pny2id
+        self.min_loss = 62.0
+
+    def on_epoch_end(self, epoch, logs=None):
+        val_batch = AmDataGenerator(self.batch_size, self.val_filter, self.pny2id).get_am_batch()
+        loss = self.model.evaluate_generator(val_batch, steps=1000)
+        if loss < self.min_loss:
+            self.min_loss = loss
+            print("   model improved! val_loss: {}".format(loss))
+            self.model.save_weights("model_weights/cnn_ctc.weights")
+        else:
+            print("   current loss: {}".format(loss))
+
+
+am_evaluate = AmEvaluate(val_data_filter, batch_size, pny2id)
+log_dir = os.path.join(".\\logs\\fit" , datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+tensorboard_callback = keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
+%tensorboard --logdir logs/fit
+```
+
+#### 5.2.7 训练模型
+
+训练50轮，每轮15000个 `batch` ，这里 `fit_generator` 函数好像要被移除了，新版本直接使用 `fit` 函数也可以训练生成器。
+
+```python
+epochs = 50
+train_model.fit_generator(train_batch, steps_per_epoch=15000, epochs=epochs,
+                          callbacks=[am_evaluate, tensorboard_callback]
+                         )
+
+#output:
+Train for 15000 steps
+Epoch 1/50
+14999/15000 [============================>.] - ETA: 0s - loss: 65.0819
+··· 此处省略一万行
+```
+
+
+
+### 5.3 开始训练Transformer
+
+#### 5.3.1 导入库并设置显存自动增长
+
+```python
+import tensorflow as tf
+from tensorflow import keras
+import numpy as np
+import time
+import json
+from pymongo import MongoClient
+from network import DFCNN, Evaluate
+from utils import AmDataGenerator
+import os
+import datetime
+%load_ext tensorboard
+
+
+gpus = tf.config.experimental.list_physical_devices(device_type="GPU")
+for gpu in gpus:
+    tf.config.experimental.set_memory_growth(gpu, True)
+```
+
+#### 5.3.2 划分训练集
+
+`id` 能被10整除的作为验证集，不能整除的作为训练集
+
+```python
+train_data_filter = {"id":{"$not": {"$mod":[10, 0]}}}
+val_data_filter = {"id":{"$mod":[10, 0]}}
+```
+
+#### 5.3.3 读取标签映射关系
+
+```python
+with open("pny2id.json", "r", encoding="utf-8") as f:
+    pny2id = json.load(f)
+id2pny = {v:k for k,v in pny2id.items()}
+with open("han2id.json", "r", encoding="utf-8") as f:
+    han2id = json.load(f)
+id2han = {v:k for k,v in han2id.items()}
+```
+
+#### 5.3.4 获取train_batch
+
+```python
+batch_size = 64
+em_dim = 128
+train_batch = LmDataGenerator(batch_size, train_data_filter, pny2id, han2id).get_lm_batch()
+```
+
+#### 5.3.5 实例化训练模型
+
+```python
+lm = Transformer(len(han2id), em_dim, 2, True)
+lm.build()
+lm.model.summary()
+
+#output:
+Model: "model"
+__________________________________________________________________________________________________
+Layer (type)                    Output Shape         Param #     Connected to                     
+==================================================================================================
+inp (InputLayer)                [(None, None)]       0                                            
+__________________________________________________________________________________________________
+embedding (Embedding)           (None, None, 128)    805632      inp[0][0]                        
+__________________________________________________________________________________________________
+position (PositionalEncoding)   (None, None, 128)    0           embedding[0][0]                  
+···此处省略一万行。。。
+
+out (Dense)                     (None, None, 6294)   811926      LN_1_2[0][0]                     
+==================================================================================================
+Total params: 1,980,310
+Trainable params: 1,980,310
+Non-trainable params: 0
+```
+
+可见，模型共有约198万个参数需要训练。
+
+#### 5.3.6 设置回调
+
+这里`callback` 同样简单弄两种：`Evaluate` 和 `Temsorboard`。
+
+```python
+class LmEvaluate(keras.callbacks.Callback):
+    def __init__(self, val_filter, batch_size, pny2id, han2id, **kwargs):
+        super(LmEvaluate, self).__init__(**kwargs)
+        self.val_filter = val_filter
+        self.bacth_size = batch_size
+        self.pny2id = pny2id
+        self.han2id = han2id
+        self.max_acc = 0.8189
+
+    def on_epoch_end(self, epoch, logs=None):
+        val_batch = LmDataGenerator(self.bacth_size, self.val_filter, self.pny2id, self.han2id).get_lm_batch()
+        loss, acc = self.model.evaluate_generator(val_batch, steps=300)
+        if acc >= self.max_acc:
+            print("    model improved!  val_loss:{} val_acc:{}".format(loss, acc))
+            self.max_acc = acc
+            self.model.save_weights("./model_weights/transformer.weights")
+        else:
+            print("    current val_loss:{} val_acc:{}".format(loss, acc))
+            
+
+lm_evaluate = LmEvaluate(val_data_filter, batch_size, pny2id, han2id)
+log_dir = os.path.join(".\\logs\\lmfit" , datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+tensorboard_callback = keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
+%tensorboard --logdir logs/lmfit
+```
+
+#### 5.3.7 训练模型
+
+训练20轮，每轮15000个 `batch` 。
+
+```python
+epochs = 20
+lm.model.fit_generator(train_batch, steps_per_epoch=15000, epochs=epochs,
+                       callbacks=[evaluate],
+                      )
+
+#output:
+Epoch 1/20
+14999/15000 [============================>.] - ETA: 0s - loss: 0.4780 - acc_function: 0.8422    model improved!  val_loss:0.5599649414420128 val_acc:0.8189043402671814
+15000/15000 [==============================] - 3133s 209ms/step - loss: 0.4780 - acc_function: 0.8422
+Epoch 2/20
+ 6106/15000 [===========>..................] - ETA: 27:30 - loss: 0.4853 - acc_function: 0.8402
+```
 
