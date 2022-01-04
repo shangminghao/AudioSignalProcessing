@@ -2,7 +2,7 @@
 
 ## 1 背景介绍
 
-笔者前段时间停车充电的时候看了李宏毅的NLP课程，讲的很生动，想起来之前笔者也学习过语音识别的一些浅显知识，觉得有必要总结一下，于是有了这篇文章，本文主要介绍模型结构和具体实现细节，关于 ASR（Automatic Speech Recognition）的发展背景等情况不再赘述。
+笔者前段时间停车充电的时候看了李宏毅的 NLP 课程，讲的很生动，想起来之前笔者也学习过语音识别的一些浅显知识，觉得有必要总结一下，于是有了这篇文章，本文主要介绍模型结构和具体实现细节，关于 ASR（Automatic Speech Recognition）的发展背景等情况不再赘述。
 
 本文搭建了一个完整的中文语音识别系统，包括声学模型和语言模型，能够将输入的音频信号识别为汉字。本文主要从以下四个方面进行介绍：**数据集、模型结构、音频信号处理、实践环节**。
 
@@ -18,7 +18,7 @@
 
 ## 2 数据集
 
-本文数据集采用了 [OpenSLR](http://www.openslr.org/resources.php) 上的中文免费数据，包括：thchs-30、aishell、primewords、st-cmd四个数据集，训练集总计大约450个小时。数据标签整理在`data`路径下，包含了解压后数据的路径，以及训练所需的数据标注格式，其中primewords、st-cmd目前未区分训练集和测试集，需要手工区分，各个数据集的规模如下：
+本文数据集采用 [OpenSLR](http://www.openslr.org/resources.php) 上下载的中文免费数据，包括：thchs-30、aishell、primewords、st-cmd 四个数据集，训练集总计大约450个小时。数据标签整理在`data`路径下，包含了解压后数据的路径，以及训练所需的数据标注格式，其中 primewords、st-cmd 目前未区分训练集和测试集，需要手工区分，各个数据集的规模如下：
 
 |    Name    | train  |  dev  | test |
 | :--------: | :----: | :---: | :--: |
@@ -27,7 +27,7 @@
 |  thchs-30  | 10000  |  893  | 2495 |
 |   st-cmd   | 10000  |  600  | 2000 |
 
-数据集总共约`40G`，无法全部加载进内存，若个 epoch 都去磁盘里面执行 wave 读取操作，速度较慢。这里我将所有语音文件和对应的数据标签全部存入 MongoDB 数据库，需要的时候再去调用。
+数据集总共约`40G`，无法一次性加载进内存（笔者电脑配置不够），放在磁盘每个 epoch 都去磁盘里面执行 wave 读取操作的话，速度又太慢。这里我将所有语音文件和对应的数据标签全部存入 MongoDB 数据库，需要的时候再去调用。
 
 ### 2.1 音频数据读取
 
@@ -184,7 +184,7 @@ DFCNN 模型结构如下：
 
 <center><font face="黑体" size=3>图4 DFCNN模型结构示意图</font></center>
 
-由图4可见，DFCNN 模型输入是一个声音信号的语谱图（Spectrogram），那么什么是语谱图，语谱图怎么求？这点我们在下节介绍。输入层紧接着的是N个由卷积层、归一化层、池化层组成的卷积神经网络结构，也是模型的主要组成单元，这里我们称为**卷积单元**。N个卷积单元之后接了一个 `Reshape` 层，这一层可以将上一层的输出由4维转换为3维，即从 `[batch_size, seq_len, width, depth]` 转换为 `[batch_size, seq_len, width* depth]` 然后就是两层全连接神经网络，模型训练时中间夹了 `Dropout` 用于缓解过拟合问题。
+由图4可见，DFCNN 模型输入是一个声音信号的语谱图（Spectrogram），那么什么是语谱图，语谱图怎么求？这点我们在下节介绍。输入层紧接着的是N个由卷积层、归一化层、池化层组成的卷积神经网络结构，也是模型的主要组成单元，这里我们称为**卷积单元**。N个卷积单元之后接了一个 `Reshape` 层，这一层可以将上一层的输出由 4 维转换为 3 维，即从 `[batch_size, seq_len, width, depth]` 转换为 `[batch_size, seq_len, width* depth]` 然后就是两层全连接神经网络，模型训练时中间夹了 `Dropout` 用于缓解过拟合问题。
 
 #### 3.1.1 卷积单元
 
@@ -487,7 +487,7 @@ class MultiHeadAttention(keras.layers.Layer):
         return input_shape[0][0], input_shape[0][1], self.latent_dim
 ```
 
-self-Attention 到这里就结束了，有没有发现一个问题，self-Attention 忽略了一个重要信息，那就是序列中的词是有顺序的！但是 Attention 机制只是简单的计算相似度然后加权求和，这些都和顺序没有关系，序列中词的位置信息被损失掉了。如果解决这个问题呢，就要依靠Position Encoding 了。
+self-Attention 到这里就结束了，有没有发现一个问题，self-Attention 忽略了一个重要信息，那就是序列中的词是有顺序的！但是 Attention 机制只是简单的计算相似度然后加权求和，这些都和顺序没有关系，序列中词的位置信息被损失掉了。如果解决这个问题呢，就要依靠 Position Encoding 了。
 
 #### 3.2.2 Position Encoding
 
@@ -660,6 +660,8 @@ mfcc = librosa.feature.mfcc(wav_signal, sr=sr, n_fft=400, hop_length=160,
 <center><font face="黑体" size=3>图14 语音信号各种频域特征之间的关系</font></center>
 
 ## 5 基于深度学习的中文语音识别实践
+
+开发环境：`Python3.7.0+tensorflow2.1.0`
 
 ### 5.1 数据预处理
 
@@ -1201,3 +1203,204 @@ Epoch 2/100
 799/800 [===========>..................] - ETA: 27:30 - loss: 0.4853 - acc_function: 0.8402
 ```
 
+#### 5.3.8 评估模型
+
+简单看下效果：
+
+```python
+for i in range(5):
+    print('\n the ', i, 'th example.')
+    # 载入训练好的模型，并进行识别
+    inp, label = next(test_batch)
+    preds = lm.model.predict(inp)
+    got = ''.join(id2han[idx] for idx in np.argmax(preds[0], axis=-1))
+    han = ''.join(id2han[idx] for idx in label[0])
+    print('原文汉字：', han)
+    print('识别结果：', got)
+
+#outputs:
+the  0 th example.
+原文汉字： 二毛你今天沒课嘛还和李霞聊天
+识别结果： 二毛你今天没客吗还和理辖聊天
+
+ the  1 th example.
+原文汉字： 波涛汹涌的好多傻说半天
+识别结果： 波涛兄涌的好多傻说半天
+
+ the  2 th example.
+原文汉字： 好好准备准备几个台词
+识别结果： 好好准备准备几个台词
+
+ the  3 th example.
+原文汉字： 让你失望了我们开卷佳儿
+识别结果： 让你失望了我们开卷家而
+
+ the  4 th example.
+原文汉字： 那卫媛是真的怀孕吗
+识别结果： 那为院是真的怀孕吗
+```
+
+效果还行吧，准确率大概81%，有时间再调调。
+
+### 5.4 模型预测
+
+#### 5.4.1 数据生成器
+
+声学模型和语言模型都训练完毕就可以进行语音识别了。简单写一个预测要使用的数据生成器，把音频特征、拼音、文字都返回。
+
+```python
+class ASRDataGenerator(object):
+    def __init__(self,
+                 batch_size,
+                 data_filter,
+                 pny2id,
+                 mongo_coll_names,
+                 n_fft=400,
+                 hop_length=160,
+                 win_length=400,
+                 window="hamming",
+                 center=False):
+        self.batch_size = batch_size
+        self.data_filter = data_filter
+        self.pny2id = pny2id
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.win_length = win_length
+        self.window = window
+        self.center = center
+        self.coll_names = mongo_coll_names
+
+    def get_asr_batch(self):
+        wav_data_lst = []
+        while True:
+            self.db = MongoClient(host="127.0.0.1", port=27017)["asr"]
+            # for coll_name in self.db.list_collection_names():
+            for coll_name in self.coll_names:
+                for doc in self.db[coll_name].find(self.data_filter, batch_size=self.batch_size):
+                    wav_str = doc["wav"]["str_data"]
+                    wav_signal = np.frombuffer(wav_str, np.short).astype(np.float32)
+                    sr = doc["wav"]["framerate"]
+                    # string in list
+                    pny = doc["pny"]
+                    # string
+                    han = doc["han"]
+                    spectrogram = np.abs(librosa.stft(wav_signal,
+                                                      n_fft=self.n_fft,
+                                                      hop_length=self.hop_length,
+                                                      win_length=self.win_length,
+                                                      window=self.window,
+                                                      center=self.center))
+                    log_spec = np.log(spectrogram + 1).T
+                    pad_log_spec = np.zeros((log_spec.shape[0] // 8 * 8 + 8, log_spec.shape[1]))
+                    pad_log_spec[:log_spec.shape[0], :] = log_spec
+                    label = [self.pny2id.get(p, 1) for p in pny]
+                    label_ctc_len = ctc_len(label)
+                    # 1、ctc最小的序列长度肯定不能小于模型输出帧数 2、显存有限，帧数大于800的数据咱就不要了哈
+                    if pad_log_spec.shape[0] // 8 >= label_ctc_len and pad_log_spec.shape[0] <= 800:
+                        wav_data_lst.append(pad_log_spec)
+                    if len(wav_data_lst) == self.batch_size:
+                        # 将wav_datapadding至最大长度，返回[batch_size, wav_max_len, half_window_len, 1)]
+                        pad_wav_data, input_length = wav_padding(wav_data_lst)
+                        yield pad_wav_data, pny, han
+                        wav_data_lst = []
+```
+
+#### 5.4.2 加载模型
+
+实例化声学模型和语言模型并加载权重:
+
+```python
+dfcnn = DFCNN(vocab_size=len(pny2id)+1, inp_width=201, is_training=False)
+dfcnn.model.load_weights("./model_weights/epoch_100_800_dfcnn_202201040702.weights")
+
+transformer = Transformer(len(han2id), em_dim=128, num_layers=2, is_training=False)
+transformer.build()
+transformer.model.load_weights("./model_weights/epoch_200_800_transformer_202201041552.weights")
+```
+
+#### 5.4.3 编辑距离
+
+计算编辑距离作为错误指标：
+
+```python
+# 编辑距离
+def GetEditDistance(str1, str2):
+    leven_cost = 0
+    s = difflib.SequenceMatcher(None, str1, str2)
+    for tag, i1, i2, j1, j2 in s.get_opcodes():
+        if tag == 'replace':
+            leven_cost += max(i2 - i1, j2 - j1)
+        elif tag == 'insert':
+            leven_cost += (j2 - j1)
+        elif tag == 'delete':
+            leven_cost += (i2 - i1)
+    return leven_cost
+```
+
+#### 5.4.4 简单评测
+
+话不多说，看下效果吧。
+
+```python
+word_num = 0
+word_error_num = 0
+for i in range(5):
+    print('\n the ', i, 'th example.')
+    # 载入训练好的模型，并进行识别
+    inputs, pny, han = next(asr_batch)
+    result = dfcnn.model.predict(inputs)
+    # 将数字结果转化为文本结果
+    _, text = decode_ctc(result, id2pny)
+    text_str = ' '.join(text)
+    print('原文拼音：', pny)
+    print('识别拼音：', text_str)
+    
+    x = np.array([pny2id.get(pny, 1) for pny in text])
+    x = x.reshape(1, -1)
+    preds = transformer.model.predict(x)
+    got = ''.join(id2han[idx] for idx in np.argmax(preds[0], axis=-1))
+    print('原文汉字：', han)
+    print('识别文字：', got)
+    word_error_num += min(len(han), GetEditDistance(han, got))
+    word_num += len(han)
+word_error_num / word_num
+
+#outputs:
+the  0 th example.
+原文拼音： zhong1 guo2 chu2 ge4 bie2 yun4 dong4 yuan2 yu3 wai4 guo2 xuan3 shou3 zu3 dui4 can1 jia1 shuang1 da3 yu4 xuan3 sai4 wai4 jun1 jiang1 zhi2 jie1 jin4 ru4 zheng4 sai4
+识别拼音： zhong1 guo2 chu2 ge4 bie2 yun4 dong4 yuan2 yu3 wai4 guo2 xuan3 shou3 zu3 dui4 can1 jia1 shuang1 da3 yu4 xuan3 sai4 wai4 jun1 jiang1 zhi2 jie1 jin4 ru4 zheng4 sai4
+原文汉字： 中国除个别运动员与外国选手组对参加双打预选赛外均将直接进入正赛
+识别文字： 中国除个别运动员与外国选手组对参家双打预选赛外军将直接进入正赛
+
+the  1 th example.
+原文拼音： dan4 bu2 yao4 dui4 ma3 dao3 yi1 yong1 er2 shang4 luan4 chao3 luan4 shuo1 fang2 zhi3 ji1 hua4 mao2 dun4 fa1 sheng1 yi4 wai4 chong1 tu1
+识别拼音： dan4 bu2 yao4 dui4 ma3 dao3 yi1 yong1 er2 shang4 luan4 chao3 luan4 shuo1 fang2 zhi3 ji1 hua4 mao2 dun4 fa1 sheng1 yi4 wai4 chong1 tu1
+原文汉字： 但不要对马导一拥而上乱吵乱说防止激化矛盾发生意外冲突
+识别文字： 但不要对马导一拥而上乱炒乱说房只机化毛盾发生意外充突
+
+the  2 th example.
+原文拼音： niao3 niao3 de ta1 chui1 wo3 dao4 chen2 si3 de ye4 bang1 wo3 wang4 an1 jing4 de ling2 hun2 men zai4
+识别拼音： niao3 niao3 de ta1 chui1 wo3 dao4 chen2 si3 de ye4 bang1 wo3 wang4 an1 jing4 de ling2 hun2 men zai4
+原文汉字： 袅袅地他吹我到沉死的夜邦我望安静的灵魂们在
+识别文字： 鸟鸟的他吹我到陈死的业帮我望安境的零魂们在
+
+the  3 th example.
+原文拼音： ci3 xiao1 xi1 yi1 chu1 li4 ji2 hong1 dong4 le quan2 yuan4 yi1 xie1 qin1 peng2 gu4 you3 fen1 fen1 chu1 mian4 quan4 zu3 gao1 shu4 huai2 yao4 san1 si1 er2 hou4 xing2
+识别拼音： ci3 xiao1 xi1 yi1 chu1 li4 ji2 hong1 dong4 le quan2 yuan4 yi1 xie1 qin1 peng2 gu4 you3 fen1 fen1 chu1 mian4 quan4 zu3 gao1 shu4 huai2 yao4 san1 si1 er2 hou4 xing2
+原文汉字： 此消息一出立即轰动了全院一些亲朋故友纷纷出面劝阻高树槐要三思而后行
+识别文字： 此消西一出利及轰动了全院一些亲朋故有分分出面劝组高术怀要三斯而后行
+
+the  4 th example.
+原文拼音： ni3 men da4 jia1 chi1 cang1 ying2 wo3 ye3 gen1 zhe chi1 cang1 ying2 ni3 men yuan4 yi4 chi1 wen2 zi wo3 jiu4 gen1 zhe chi1 wen2 zi shen2 me shi4 bu4 yong4 wen4 wo3
+识别拼音： ni3 men da4 jia1 chi1 cang1 ying2 wo3 ye3 gen1 zhe chi1 cang1 ying2 ni3 men yuan4 yi4 chi1 wen2 zi wo3 jiu4 gen1 chi1 wen2 zi shen2 me shi4 bu4 yong4 wen4 wo3 wang3
+原文汉字： 你们大家吃苍蝇我也跟着吃苍蝇你们愿意吃蚊子我就跟着吃蚊子什么事不用问我
+识别文字： 你们大家吃仓营我也跟着吃苍营你们院意吃文子我就跟吃文子什么是不用问我网
+
+0.23972602739726026
+```
+
+错误率大概在 `0.23972602739726026`，效果还可以，原本以为硬train一发效果完全不能看，结果准确率还行，调调参数应该会有提高。
+
+## 6 小结
+
+花了3周时间终于写了这篇一万三千字的博客，年底实在太忙了QAQ，本文主要介绍了一个完整的基于深度学习的端到端语音识别过程。从数据集获取、数据库存取，到模型结构拆分讲解，再到音频特征的提取，最后训练模型并进行预测，每个环节都配有完整的代码和代码讲解，对语音识别初学者具有很好的引导作用。
