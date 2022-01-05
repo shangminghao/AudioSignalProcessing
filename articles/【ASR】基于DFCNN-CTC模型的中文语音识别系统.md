@@ -241,14 +241,14 @@ class CNNCell(keras.layers.Layer):
 
 要人来标注这种对齐是非常困难而且容易出错的，因为很多音素的边界是很难区分，如下图5，人通过看波形或者频谱是很难准确的区分其边界的。之前基于 HMM 的语音识别系统在训练声学模型是需要对齐，我们通常会让模型进行强制对齐（forced alignment）。类似的在手写文字识别中，也会存在同样的问题，虽然看起来比声音简单一些，传统的手写文字识别方法首先需要一个分割（segmentation）算法，然后再识别。
 
-![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5p6gAN1APvD1WCdCKiaSgPO16COGag9wn9J2qzYIFdtBDCuFZ9UVV9Iz2XyYFTUN1XRdMXxkwT7Rag/0?wx_fmt=png)
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5qKhugCqgT0iaTsXwat9ib9iajjBXTGicIpmJdcGJWRic75fqyAFXnfG2JaDf4bRzg5st06icJlepDy6qkA/0?wx_fmt=png)
 
 <center><font face="黑体" size=3>图5 文字识别和语音识别中的的对齐问题</font></center>
 
 **CTC（Connectionist Temporal Classification）算法并不要求输入输出是严格对齐的**。
 
 为了更好的理解CTC的对齐方法，先举个简单的对齐方法。假设对于一段音频，我们希望的输出是 $Y = [c,a,t]$ 这个序列，一种将输入输出进行对齐的方式如下图6所示，先将每个输入对应一个输出字符，然后将重复的字符删除。
-![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5p6gAN1APvD1WCdCKiaSgPO1oudcpvHgLP9BHptaP9pR3hgozooH09p7Py2erDloxna87C7fhicHGrA/0?wx_fmt=png)
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5qKhugCqgT0iaTsXwat9ib9iajUA9ac1fcCaoLnicPUrqAhYEHAgSW2iby4JedfYSGC8IbLVU1yKX2WYWg/0?wx_fmt=png)
 
 <center><font face="黑体" size=3>图6 cat序列对齐</font></center>
 
@@ -259,7 +259,7 @@ class CNNCell(keras.layers.Layer):
 
 为了解决上述问题，CTC算法引入的一个新的占位符用于输出对齐的结果。这个占位符称为空白占位符，通常使用符号 $\epsilon$，也称 blank。这个符号在对齐结果中输出，但是在最后的去重操作会将所有的 $\epsilon$ 删除得到最终的输出。利用这个占位符，可以将输入与输出有了非常合理的对应关系，如下图7所示。
 
-![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5p6gAN1APvD1WCdCKiaSgPO1lWuWpQ0pYueQbx8icSu3pXG53KdjHtSbmyNqYDUSnwmPIqLIviadaCNQ/0?wx_fmt=png)
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5qKhugCqgT0iaTsXwat9ib9iajvMxFUuwIKynw6JoTC6LvcEgEWoczErhvXibJM2054vDDB5z59vqZ0dQ/0?wx_fmt=png)
 
 <center><font face="黑体" size=3>图7 CTC对齐示意</font></center>
 
