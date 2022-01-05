@@ -6,13 +6,13 @@
 
 本文搭建了一个完整的语音识别系统，包括声学模型和语言模型，能够将输入的音频信号识别为汉字。本文主要从以下四个方面进行介绍：**数据集、模型结构、音频信号处理、实践环节**。
 
-完整的语音识别系统包括两个模型：将语音信号转换为“拼音+声调”的**声学模型**，将“拼音+声调”转换为文字的**语言模型**。为什么用两个模型？直接一个模型从语音信号到文字，硬 train 一发不好吗？如果只是一个孤立词识别的语音识别系统，我相信硬 train 一发应该也能效果不错，但是对于句子级的语音识别任务，除了单纯地识别出发音元素以外，还需要识别出语音的含义转化为一串文字，这个过程复杂度更高，一个模型效果通常不太好。所以通常我们需要声学模型将声学和发音学的知识进行整合，将语音信号经过特征处理后作为声学模型的输入，经过转换后输出可变长的发音元素，汉语来讲就是“拼音+声调”。然后我们需要一个语言模型学习“拼音+声调”与文字之间的相互关系，将“拼音+声调”作为语音模型的输入，输出文字。本文声学模型使用科大讯飞提出的 DFCNN 深度全序列卷积神经网络，语言模型则使用 Transformer 模型。
+完整的语音识别系统包括两个模型：将语音信号转换为“拼音+声调”的**声学模型**，将“拼音+声调”转换为文字的**语言模型**。为什么用两个模型？直接一个模型从语音信号到文字，硬 train 一发不好吗？如果只是一个孤立词识别的语音识别系统，我相信硬 train 一发应该也能效果不错，但是对于句子级的语音识别任务，除了单纯地识别出发音元素以外，还需要识别出语音的含义转化为一串文字，这个过程复杂度更高，一个模型效果通常不太好。所以通常我们需要声学模型将声学和发音学的知识进行整合，将语音信号经过特征处理后作为声学模型的输入，经过转换后输出可变长的发音元素，汉语来讲就是“拼音+声调”。然后我们需要一个语言模型学习“拼音+声调”与文字之间的相互关系，将“拼音+声调”作为语音模型的输入，输出文字。本文声学模型使用 i-FLY 提出的 DFCNN 深度全序列卷积神经网络，语言模型则使用 Transformer 模型。
 
-![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5qH9tenE7VPa6cIYCIzGJIYgyOiao2q7j6PuqVzkOEDhmARhQQNlwO17IbLFj24ZpibKDl8KA1Ceo1g/0?wx_fmt=png)
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5qKhugCqgT0iaTsXwat9ib9iajmY1szuebdIlNcA1OwEtpX6tBgyrOXvP54PpYOlpG0WnOqum1nh39iaQ/0?wx_fmt=png)
 
 <center><font face="黑体" size=3>图1 声学模型的任务</font></center>
 
-![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5qH9tenE7VPa6cIYCIzGJIYfYj0HO6a4qPH0Pkf1y84wDv4sfibW4LwJF0icXV8jqxC5U5icpH10NL6Q/0?wx_fmt=png)
+![](https://mmbiz.qpic.cn/mmbiz_png/GJUG0H1sS5qKhugCqgT0iaTsXwat9ib9iajLwlVGulD1bU7ss9icTgpBOnFbPENadt2jxAL82Ey0uIOZ46RCTXTW9Q/0?wx_fmt=png)
 
 <center><font face="黑体" size=3>图2 语言模型的任务</font></center>
 
@@ -75,7 +75,7 @@ plot出来看一下。如下图，横轴表示采样点，纵轴表示声音信�
 
 ### 2.2 音频数据写入MongoDB
 
-MongoDB 是由C++语言编写的，是一个基于分布式文件存储的开源数据库系统。MongoDB 将数据存储为一个文档，数据结构由键值`key: value`对组成。MongoDB 文档类似于 `JSON` 对象，文档字段值可以包含其他文档，数组及文档数组。
+MongoDB 是由 C++ 语言编写的，是一个基于分布式文件存储的开源数据库系统。MongoDB 将数据存储为一个文档，数据结构由键值`key: value`对组成。MongoDB 文档类似于 `JSON` 对象，文档字段值可以包含其他文档，数组及文档数组。
 
 类似关系型数据库中“表（table）”的概念，MongoDB中对应的是“集合（collection）”，这里我们根据四个数据集，创建4个`collection` ，分别将数据集插入对应集合。Python 中提供了与MongoDB数据库交互的第三方库 `pymongo` ，这里我们使用 `pymongo`进行写入操作。
 
@@ -156,7 +156,7 @@ db['thchs30'].find_one({"id":1})
 """
 {
 	'_id': ObjectId('5e201377a070db560e390b54'),
- 	'han': '他仅凭腰部的力量在泳道上下翻腾蛹动蛇行状如海豚一直以一头的优势领先',
+ 	'han': '他仅凭腰部的力量在泳道上下翻腾蛹动蛇行状如海豚...',
  	'id': 1,
  	'wav': {
  			'nchannels': 1,
@@ -166,7 +166,7 @@ db['thchs30'].find_one({"id":1})
   			'sampwidth': 2
   		   },
 	'pny': ['ta1','jin3','ping2','yao1','bu4','de','li4','liang4','zai4','yong3','dao4','shang4','xia4',
-'fan1','teng2','yong3','dong4','she2','xing2','zhuang4','ru2','hai3','tun2','yi4','zhi2','yi3','yi1','tou2','de','you1','shi4','ling3','xian1']
+'fan1','teng2','yong3','dong4','she2','xing2','zhuang4','ru2','hai3','tun2',...]
 }
   
 """ 
@@ -176,7 +176,7 @@ db['thchs30'].find_one({"id":1})
 
 ### 3.1 声学模型
 
-科大讯飞在2016年提出了一种全新的语音识别框架，称为全序列卷积神经网络（deep fully convolutional neural network，DFCNN）。DFCNN 将一句语音转化成一张图像作为输入，把时间和频率作为图像的两个维度（语谱图），通过较多的卷积层和池化(pooling)层的组合，实现对整句语音的建模，输出单元则直接与最终的识别结果（比如音节或者汉字）相对应。利用 CNN 的参数共享机制，可以将参数数量下降一个级别，且深层次的卷积和池化层能够充分考虑语音信号的上下文信息，且可以在较短的时间内就可以得到识别结果，具有较好的实时性。
+i-FLY 在2016年提出了一种全新的语音识别框架，称为全序列卷积神经网络（deep fully convolutional neural network，DFCNN）。DFCNN 将一句语音转化成一张图像作为输入，把时间和频率作为图像的两个维度（语谱图），通过较多的卷积层和池化(pooling)层的组合，实现对整句语音的建模，输出单元则直接与最终的识别结果（比如音节或者汉字）相对应。利用 CNN 的参数共享机制，可以将参数数量下降一个级别，且深层次的卷积和池化层能够充分考虑语音信号的上下文信息，且可以在较短的时间内就可以得到识别结果，具有较好的实时性。
 
 DFCNN 模型结构如下：
 
@@ -1404,3 +1404,4 @@ the  4 th example.
 ## 6 小结
 
 花了3周时间终于写了这篇一万三千字的博客，年底实在太忙了QAQ，本文主要介绍了一个完整的基于深度学习的端到端语音识别过程。从数据集获取、数据库存取，到模型结构拆分讲解，再到音频特征的提取，最后训练模型并进行预测，每个环节都配有完整的代码和代码讲解，对语音识别初学者具有很好的引导作用。
+
